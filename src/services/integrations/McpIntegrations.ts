@@ -135,10 +135,10 @@ function installMcpIntegration(config: McpInstallerConfig): () => Promise<number
             p.log.warn(pc.yellow(`Corrupt JSON file detected at ${configPath}`));
 
             const choice = await p.select({
-              message: 'How would you like to handle the corrupt file?',
+              message: 'What do you want to do with the corrupt file?',
               options: [
-                { value: 'backup', label: 'Backup old file and create new', hint: `Renames to ${path.basename(configPath)}.old` },
-                { value: 'overwrite', label: 'Overwrite existing file', hint: 'Deletes corrupt file' },
+                { value: 'backup', label: 'Backup the old file', hint: `(Rename to ${path.basename(configPath)}.old)` },
+                { value: 'overwrite', label: 'Overwrite it', hint: '(Deletes the corrupt file)' },
               ],
             });
 
