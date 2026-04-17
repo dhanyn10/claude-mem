@@ -120,18 +120,18 @@ function installMcpIntegration(config: McpInstallerConfig): () => Promise<number
           console.log(`  MCP config written to: ${configPath}`);
         } catch (error) {
           const isCorrupt = (error as Error).message.includes('Corrupt JSON file');
-          const isInteractive = !!process.stdin.isTTY;
+          // Match the TTY detection logic used in npx-cli/commands/install.ts
+          const isInteractive = process.stdin.isTTY === true;
 
           if (isCorrupt && config.ideId === 'antigravity') {
             if (!isInteractive) {
-              // Non-interactive: just throw but with a better message
               throw new Error(`Corrupt JSON file detected at ${configPath}. Please repair or delete it and try again.`);
             }
 
-            console.log(pc.yellow(`\n  Warning: Corrupt JSON file detected at ${configPath}`));
+            p.log.warn(pc.yellow(`Corrupt JSON file detected at ${configPath}`));
 
             const choice = await p.select({
-              message: 'How would you like to proceed?',
+              message: 'How would you like to handle the corrupt file?',
               options: [
                 { value: 'backup', label: 'Backup old file and create new', hint: `Renames to ${path.basename(configPath)}.old` },
                 { value: 'overwrite', label: 'Overwrite existing file', hint: 'Deletes corrupt file' },
@@ -145,15 +145,15 @@ function installMcpIntegration(config: McpInstallerConfig): () => Promise<number
             if (choice === 'backup') {
               const backupPath = configPath + '.old';
               renameSync(configPath, backupPath);
-              console.log(`  Backed up corrupt file to: ${backupPath}`);
+              p.log.info(`Backed up corrupt file to: ${backupPath}`);
             } else {
               unlinkSync(configPath);
-              console.log(`  Removed corrupt file.`);
+              p.log.info(`Removed corrupt file.`);
             }
 
             // Retry writing the config
             writeMcpJsonConfig(configPath, mcpServerPath, config.configKey);
-            console.log(`  MCP config written to: ${configPath}`);
+            p.log.success(`MCP config written to: ${configPath}`);
           } else {
             throw error;
           }
