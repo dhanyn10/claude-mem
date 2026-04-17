@@ -18,7 +18,9 @@
 
 import path from 'path';
 import { homedir } from 'os';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from 'fs';
+import * as p from '@clack/prompts';
+import pc from 'picocolors';
 import { logger } from '../../utils/logger.js';
 import { findMcpServerPath } from './CursorHooksInstaller.js';
 import { readJsonSafe } from '../../utils/json-utils.js';
@@ -113,8 +115,49 @@ function installMcpIntegration(config: McpInstallerConfig): () => Promise<number
       if (config.ideId === 'warp' && !existsSync(path.dirname(configPath))) {
         console.log(`  Note: ~/.warp/ not found. MCP may need to be configured via Warp Drive UI.`);
       } else {
-        writeMcpJsonConfig(configPath, mcpServerPath, config.configKey);
-        console.log(`  MCP config written to: ${configPath}`);
+        try {
+          writeMcpJsonConfig(configPath, mcpServerPath, config.configKey);
+          console.log(`  MCP config written to: ${configPath}`);
+        } catch (error) {
+          const isCorrupt = (error as Error).message.includes('Corrupt JSON file');
+          const isInteractive = !!process.stdin.isTTY;
+
+          if (isCorrupt && config.ideId === 'antigravity') {
+            if (!isInteractive) {
+              // Non-interactive: just throw but with a better message
+              throw new Error(`Corrupt JSON file detected at ${configPath}. Please repair or delete it and try again.`);
+            }
+
+            console.log(pc.yellow(`\n  Warning: Corrupt JSON file detected at ${configPath}`));
+
+            const choice = await p.select({
+              message: 'How would you like to proceed?',
+              options: [
+                { value: 'backup', label: 'Backup old file and create new', hint: `Renames to ${path.basename(configPath)}.old` },
+                { value: 'overwrite', label: 'Overwrite existing file', hint: 'Deletes corrupt file' },
+              ],
+            });
+
+            if (p.isCancel(choice)) {
+              throw new Error('Installation cancelled by user');
+            }
+
+            if (choice === 'backup') {
+              const backupPath = configPath + '.old';
+              renameSync(configPath, backupPath);
+              console.log(`  Backed up corrupt file to: ${backupPath}`);
+            } else {
+              unlinkSync(configPath);
+              console.log(`  Removed corrupt file.`);
+            }
+
+            // Retry writing the config
+            writeMcpJsonConfig(configPath, mcpServerPath, config.configKey);
+            console.log(`  MCP config written to: ${configPath}`);
+          } else {
+            throw error;
+          }
+        }
       }
 
       // Inject context if configured
