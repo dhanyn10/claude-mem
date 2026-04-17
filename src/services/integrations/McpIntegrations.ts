@@ -100,12 +100,6 @@ function installMcpIntegration(config: McpInstallerConfig): () => Promise<number
   return async (): Promise<number> => {
     const isInteractive = process.stdin.isTTY === true;
 
-    if (isInteractive) {
-      p.log.info(`Installing Claude-Mem MCP integration for ${config.ideLabel}...`);
-    } else {
-      console.log(`\nInstalling Claude-Mem MCP integration for ${config.ideLabel}...\n`);
-    }
-
     const mcpServerPath = findMcpServerPath();
     if (!mcpServerPath) {
       console.error('Could not find MCP server script');
@@ -121,24 +115,20 @@ function installMcpIntegration(config: McpInstallerConfig): () => Promise<number
       if (config.ideId === 'warp' && !existsSync(path.dirname(configPath))) {
         console.log(`  Note: ~/.warp/ not found. MCP may need to be configured via Warp Drive UI.`);
       } else {
+        const writeConfig = () => writeMcpJsonConfig(configPath, mcpServerPath, config.configKey);
+
         try {
-          writeMcpJsonConfig(configPath, mcpServerPath, config.configKey);
-          if (isInteractive) {
-            p.log.success(`MCP config written to: ${configPath}`);
-          } else {
-            console.log(`  MCP config written to: ${configPath}`);
-          }
+          writeConfig();
         } catch (error) {
           const isCorrupt = (error as Error).message.includes('Corrupt JSON file');
-
           if (isCorrupt && config.ideId === 'antigravity' && isInteractive) {
-            p.log.warn(pc.yellow(`Corrupt JSON file detected at ${configPath}`));
+            p.log.warn(pc.yellow(`Corrupt JSON detected: ${configPath}`));
 
             const choice = await p.select({
               message: 'What do you want to do with the corrupt file?',
               options: [
-                { value: 'backup', label: 'Backup the old file', hint: `(Rename to ${path.basename(configPath)}.old)` },
-                { value: 'overwrite', label: 'Overwrite it', hint: '(Deletes the corrupt file)' },
+                { value: 'backup', label: 'Backup the old file', hint: '(.old)' },
+                { value: 'overwrite', label: 'Overwrite it', hint: '(Deletes the file)' },
               ],
             });
 
@@ -147,23 +137,24 @@ function installMcpIntegration(config: McpInstallerConfig): () => Promise<number
             }
 
             if (choice === 'backup') {
-              const backupPath = configPath + '.old';
-              renameSync(configPath, backupPath);
-              p.log.info(`Backed up corrupt file to: ${backupPath}`);
+              renameSync(configPath, configPath + '.old');
+              p.log.info(`Backed up to ${path.basename(configPath)}.old`);
             } else {
               unlinkSync(configPath);
-              p.log.info(`Removed corrupt file.`);
+              p.log.info('Removed corrupt file.');
             }
 
-            // Retry writing the config
-            writeMcpJsonConfig(configPath, mcpServerPath, config.configKey);
-            p.log.success(`MCP config written to: ${configPath}`);
-          } else if (isCorrupt && config.ideId === 'antigravity') {
-            // Non-interactive fallback
-            throw new Error(`Corrupt JSON file detected at ${configPath}. Please repair or delete it and try again.`);
+            // Retry
+            writeConfig();
           } else {
             throw error;
           }
+        }
+
+        if (isInteractive) {
+          p.log.success(`MCP config written: ${path.basename(configPath)}`);
+        } else {
+          console.log(`  MCP config written: ${configPath}`);
         }
       }
 
