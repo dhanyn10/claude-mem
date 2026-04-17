@@ -56,6 +56,7 @@ import {
 } from '../utils/paths.js';
 import { readJsonSafe } from '../../utils/json-utils.js';
 import { detectInstalledIDEs } from './ide-detection.js';
+import { checkAntigravityConfig } from '../../services/integrations/McpIntegrations.js';
 
 // ---------------------------------------------------------------------------
 // Registration helpers
@@ -443,6 +444,9 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
     }
   } else if (process.stdin.isTTY) {
     selectedIDEs = await promptForIDESelection();
+    if (selectedIDEs.includes('antigravity')) {
+      await checkAntigravityConfig();
+    }
   } else {
     // Non-interactive: default to claude-code
     selectedIDEs = ['claude-code'];

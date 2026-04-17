@@ -79,6 +79,53 @@ function writeMcpJsonConfig(
 // ============================================================================
 
 /**
+ * Proactively check for Antigravity config corruption and prompt the user.
+ * Called early in the install flow to ensure interactive recovery.
+ */
+export async function checkAntigravityConfig(): Promise<void> {
+  const isInteractive = process.stdin.isTTY === true;
+  if (!isInteractive) return;
+
+  const configPath = ANTIGRAVITY_CONFIG.configPath;
+  if (!existsSync(configPath)) return;
+
+  let isCorrupt = false;
+  try {
+    const content = readFileSync(configPath, 'utf-8');
+    if (!content.trim()) isCorrupt = true;
+    else JSON.parse(content);
+  } catch {
+    isCorrupt = true;
+  }
+
+  if (isCorrupt) {
+    p.log.warn(pc.yellow(`Corrupt JSON file detected at ${configPath}`));
+
+    const choice = await p.select({
+      message: 'What do you want to do with the corrupt Antigravity config?',
+      options: [
+        { value: 'backup', label: 'Backup the old file', hint: '(.old)' },
+        { value: 'overwrite', label: 'Overwrite with new config', hint: '(Deletes corrupt file)' },
+      ],
+    });
+
+    if (p.isCancel(choice)) {
+      p.cancel('Installation cancelled.');
+      process.exit(0);
+    }
+
+    if (choice === 'backup') {
+      const backupPath = configPath + '.old';
+      renameSync(configPath, backupPath);
+      p.log.info(`Backed up corrupt file to: ${path.basename(backupPath)}`);
+    } else {
+      unlinkSync(configPath);
+      p.log.info(`Removed corrupt file.`);
+    }
+  }
+}
+
+/**
  * Configuration for a JSON-based MCP IDE integration.
  */
 interface McpInstallerConfig {
@@ -115,42 +162,7 @@ function installMcpIntegration(config: McpInstallerConfig): () => Promise<number
       if (config.ideId === 'warp' && !existsSync(path.dirname(configPath))) {
         console.log(`  Note: ~/.warp/ not found. MCP may need to be configured via Warp Drive UI.`);
       } else {
-        const writeConfig = () => writeMcpJsonConfig(configPath, mcpServerPath, config.configKey);
-
-        try {
-          writeConfig();
-        } catch (error) {
-          const isCorrupt = (error as Error).message.includes('Corrupt JSON file');
-          if (isCorrupt && config.ideId === 'antigravity' && isInteractive) {
-            p.log.warn(pc.yellow(`Corrupt JSON detected: ${configPath}`));
-
-            const choice = await p.select({
-              message: 'What do you want to do with the corrupt file?',
-              options: [
-                { value: 'backup', label: 'Backup the old file', hint: '(.old)' },
-                { value: 'overwrite', label: 'Overwrite it', hint: '(Deletes the file)' },
-              ],
-            });
-
-            if (p.isCancel(choice)) {
-              throw new Error('Installation cancelled by user');
-            }
-
-            if (choice === 'backup') {
-              renameSync(configPath, configPath + '.old');
-              p.log.info(`Backed up to ${path.basename(configPath)}.old`);
-            } else {
-              unlinkSync(configPath);
-              p.log.info('Removed corrupt file.');
-            }
-
-            // Retry
-            writeConfig();
-          } else {
-            throw error;
-          }
-        }
-
+        writeMcpJsonConfig(configPath, mcpServerPath, config.configKey);
         if (isInteractive) {
           p.log.success(`MCP config written: ${path.basename(configPath)}`);
         } else {
