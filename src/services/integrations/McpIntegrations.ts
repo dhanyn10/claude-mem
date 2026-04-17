@@ -98,7 +98,13 @@ interface McpInstallerConfig {
  */
 function installMcpIntegration(config: McpInstallerConfig): () => Promise<number> {
   return async (): Promise<number> => {
-    console.log(`\nInstalling Claude-Mem MCP integration for ${config.ideLabel}...\n`);
+    const isInteractive = process.stdin.isTTY === true;
+
+    if (isInteractive) {
+      p.log.info(`Installing Claude-Mem MCP integration for ${config.ideLabel}...`);
+    } else {
+      console.log(`\nInstalling Claude-Mem MCP integration for ${config.ideLabel}...\n`);
+    }
 
     const mcpServerPath = findMcpServerPath();
     if (!mcpServerPath) {
@@ -117,17 +123,15 @@ function installMcpIntegration(config: McpInstallerConfig): () => Promise<number
       } else {
         try {
           writeMcpJsonConfig(configPath, mcpServerPath, config.configKey);
-          console.log(`  MCP config written to: ${configPath}`);
+          if (isInteractive) {
+            p.log.success(`MCP config written to: ${configPath}`);
+          } else {
+            console.log(`  MCP config written to: ${configPath}`);
+          }
         } catch (error) {
           const isCorrupt = (error as Error).message.includes('Corrupt JSON file');
-          // Match the TTY detection logic used in npx-cli/commands/install.ts
-          const isInteractive = process.stdin.isTTY === true;
 
-          if (isCorrupt && config.ideId === 'antigravity') {
-            if (!isInteractive) {
-              throw new Error(`Corrupt JSON file detected at ${configPath}. Please repair or delete it and try again.`);
-            }
-
+          if (isCorrupt && config.ideId === 'antigravity' && isInteractive) {
             p.log.warn(pc.yellow(`Corrupt JSON file detected at ${configPath}`));
 
             const choice = await p.select({
@@ -154,6 +158,9 @@ function installMcpIntegration(config: McpInstallerConfig): () => Promise<number
             // Retry writing the config
             writeMcpJsonConfig(configPath, mcpServerPath, config.configKey);
             p.log.success(`MCP config written to: ${configPath}`);
+          } else if (isCorrupt && config.ideId === 'antigravity') {
+            // Non-interactive fallback
+            throw new Error(`Corrupt JSON file detected at ${configPath}. Please repair or delete it and try again.`);
           } else {
             throw error;
           }
