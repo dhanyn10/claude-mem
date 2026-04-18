@@ -446,7 +446,7 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
 
       selectedIDEs = ides as string[];
 
-      // ADDED: Prompt for name
+      // User-requested test prompt: "What is your name?"
       const name = await p.text({
         message: 'What is your name?',
         placeholder: 'Anonymous',
