@@ -445,6 +445,21 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
       }
 
       selectedIDEs = ides as string[];
+
+      // ADDED: Prompt for name
+      const name = await p.text({
+        message: 'What is your name?',
+        placeholder: 'Anonymous',
+      });
+
+      if (p.isCancel(name)) {
+        p.cancel('Installation cancelled.');
+        process.exit(0);
+      }
+
+      if (name) {
+        log.info(`Hello, ${pc.cyan(name)}! Setting things up for you...`);
+      }
     }
   } else {
     // Non-interactive: default to claude-code
