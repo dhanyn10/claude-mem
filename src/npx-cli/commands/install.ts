@@ -432,68 +432,27 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
         hint: ide.supported ? ide.hint : 'coming soon',
       }));
 
-      // THE FIX: Use p.group to chain prompts
-      const results = await p.group({
-        ides: () => p.multiselect({
-          message: 'Which IDEs do you use?',
-          options: ideOptions,
-          initialValues: detected.filter((ide) => ide.supported).map((ide) => ide.id),
-          required: true,
-        }),
-        antigravityRepair: ({ results }) => {
-          if (results.ides?.includes('antigravity')) {
-            const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
-            if (existsSync(configPath)) {
-              let isCorrupt = false;
-              try {
-                const content = readFileSync(configPath, 'utf-8').trim();
-                if (!content) isCorrupt = true;
-                else JSON.parse(content);
-              } catch {
-                isCorrupt = true;
-              }
-
-              if (isCorrupt) {
-                return p.select({
-                  message: pc.yellow(`Antigravity config is corrupt. How would you like to fix it?`),
-                  options: [
-                    { value: 'backup', label: 'Backup old file and start fresh', hint: '(.old)' },
-                    { value: 'overwrite', label: 'Delete corrupt file and start fresh', hint: '(overwrite)' },
-                  ],
-                });
-              }
-            }
-          }
-          return Promise.resolve(undefined);
-        }
-      }, {
-        onCancel: () => {
-          p.cancel('Installation cancelled.');
-          process.exit(0);
-        }
+      const ides = await p.multiselect({
+        message: 'Which IDEs do you use?',
+        options: ideOptions,
+        initialValues: detected.filter((ide) => ide.supported).map((ide) => ide.id),
+        required: true,
       });
 
-      selectedIDEs = results.ides;
-
-      // Perform repair actions if requested in the group
-      if (results.antigravityRepair) {
-        const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
-        if (results.antigravityRepair === 'backup') {
-          renameSync(configPath, configPath + '.old');
-          log.success(`Backed up corrupt file to ${basename(configPath)}.old`);
-        } else {
-          rmSync(configPath, { force: true });
-          log.success('Removed corrupt Antigravity config file.');
-        }
+      if (p.isCancel(ides)) {
+        p.cancel('Installation cancelled.');
+        process.exit(0);
       }
+
+      selectedIDEs = ides as string[];
     }
   } else {
     // Non-interactive: default to claude-code
     selectedIDEs = ['claude-code'];
   }
 
-  // Handle single IDE corruption check (for --ide antigravity)
-  if (options.ide === 'antigravity' && isInteractive) {
+  // INDEPENDENT Antigravity corruption check (runs for both interactive and --ide cases)
+  if (selectedIDEs.includes('antigravity') && isInteractive) {
     const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
     if (existsSync(configPath)) {
       let isCorrupt = false;
