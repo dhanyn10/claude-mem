@@ -466,10 +466,11 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
     selectedIDEs = ['claude-code'];
   }
 
-  // INDEPENDENT Antigravity corruption check (runs for both interactive and --ide cases)
+  // MCP Setup prompt for Antigravity (merged for both interactive and flag flows)
   if (selectedIDEs.includes('antigravity') && isInteractive) {
     const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
     if (existsSync(configPath)) {
+      // Proactively check for corruption
       let isCorrupt = false;
       try {
         const content = readFileSync(configPath, 'utf-8').trim();
@@ -479,27 +480,30 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
         isCorrupt = true;
       }
 
-      if (isCorrupt) {
-        const action = await p.select({
-          message: pc.yellow(`Antigravity config is corrupt. How would you like to fix it?`),
-          options: [
-            { value: 'backup', label: 'Backup old file and start fresh', hint: '(.old)' },
-            { value: 'overwrite', label: 'Delete corrupt file and start fresh', hint: '(overwrite)' },
-          ],
-        });
+      const promptMessage = isCorrupt
+        ? pc.yellow('Antigravity config is corrupt. How would you like to handle it?')
+        : 'Existing Antigravity config found. How would you like to proceed?';
 
-        if (p.isCancel(action)) {
-          p.cancel('Installation cancelled.');
-          process.exit(0);
-        }
+      const action = await p.select({
+        message: promptMessage,
+        options: [
+          { value: 'backup', label: 'Backup old file and start fresh', hint: '(.old)' },
+          { value: 'overwrite', label: 'Delete existing file and start fresh', hint: '(overwrite)' },
+          { value: 'keep', label: 'Keep existing file (may cause errors if corrupt)', hint: '(merge)' },
+        ],
+      });
 
-        if (action === 'backup') {
-          renameSync(configPath, configPath + '.old');
-          log.success(`Backed up corrupt file to ${basename(configPath)}.old`);
-        } else {
-          rmSync(configPath, { force: true });
-          log.success('Removed corrupt Antigravity config file.');
-        }
+      if (p.isCancel(action)) {
+        p.cancel('Installation cancelled.');
+        process.exit(0);
+      }
+
+      if (action === 'backup') {
+        renameSync(configPath, configPath + '.old');
+        log.success(`Backed up existing file to ${basename(configPath)}.old`);
+      } else if (action === 'overwrite') {
+        rmSync(configPath, { force: true });
+        log.success('Removed existing Antigravity config file.');
       }
     }
   }
