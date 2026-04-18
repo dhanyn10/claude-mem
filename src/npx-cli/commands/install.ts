@@ -10,8 +10,9 @@
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import { execSync } from 'child_process';
-import { cpSync, existsSync, readFileSync, rmSync } from 'fs';
-import { join } from 'path';
+import { cpSync, existsSync, readFileSync, rmSync, renameSync, unlinkSync } from 'fs';
+import { join, basename } from 'path';
+import { homedir } from 'os';
 
 // Non-TTY detection: @clack/prompts crashes with ENOENT in non-TTY environments
 const isInteractive = process.stdin.isTTY === true;
@@ -56,7 +57,6 @@ import {
 } from '../utils/paths.js';
 import { readJsonSafe } from '../../utils/json-utils.js';
 import { detectInstalledIDEs } from './ide-detection.js';
-import { checkAntigravityConfig } from '../../services/integrations/McpIntegrations.js';
 
 // ---------------------------------------------------------------------------
 // Registration helpers
@@ -427,8 +427,9 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
     }
   }
 
-  // IDE selection
-  let selectedIDEs: string[];
+  // IDE selection & optional Antigravity repair
+  let selectedIDEs: string[] = [];
+
   if (options.ide) {
     selectedIDEs = [options.ide];
     const allIDEs = detectInstalledIDEs();
@@ -442,13 +443,99 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
       log.info(`Available IDEs: ${allIDEs.map((i) => i.id).join(', ')}`);
       process.exit(1);
     }
-  } else if (process.stdin.isTTY) {
-    selectedIDEs = await promptForIDESelection();
-    if (selectedIDEs.includes('antigravity')) {
-      await checkAntigravityConfig();
+
+    // Check for corruption in --ide mode if interactive
+    if (options.ide === 'antigravity' && isInteractive) {
+      const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
+      if (existsSync(configPath)) {
+        let corrupt = false;
+        try {
+          const content = readFileSync(configPath, 'utf-8');
+          if (!content.trim()) corrupt = true;
+          else JSON.parse(content);
+        } catch { corrupt = true; }
+
+        if (corrupt) {
+          const choice = await p.select({
+            message: pc.yellow(`Corrupt Antigravity config detected. How would you like to proceed?`),
+            options: [
+              { value: 'backup', label: 'Backup old file and create new', hint: '(.old)' },
+              { value: 'overwrite', label: 'Overwrite existing file', hint: '(Deletes corrupt file)' },
+            ],
+          });
+          if (p.isCancel(choice)) { p.cancel('Installation cancelled.'); process.exit(0); }
+          if (choice === 'backup') {
+            renameSync(configPath, configPath + '.old');
+            log.success(`Backed up to: ${basename(configPath)}.old`);
+          } else {
+            unlinkSync(configPath);
+            log.success('Removed corrupt file.');
+          }
+        }
+      }
+    }
+  } else if (isInteractive) {
+    const detectedIDEs = detectInstalledIDEs();
+    const detected = detectedIDEs.filter((ide) => ide.detected);
+
+    if (detected.length === 0) {
+      log.warn('No supported IDEs detected. Installing for Claude Code by default.');
+      selectedIDEs = ['claude-code'];
+    } else {
+      const options = detected.map((ide) => ({
+        value: ide.id,
+        label: ide.label,
+        hint: ide.supported ? ide.hint : 'coming soon',
+      }));
+
+      const results = await p.group({
+        ides: () => p.multiselect({
+          message: 'Which IDEs do you use?',
+          options,
+          initialValues: detected.filter((ide) => ide.supported).map((ide) => ide.id),
+          required: true,
+        }),
+        antigravityRepair: ({ results }) => {
+          if (results.ides?.includes('antigravity')) {
+            const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
+            if (existsSync(configPath)) {
+              try {
+                const content = readFileSync(configPath, 'utf-8');
+                if (content.trim()) JSON.parse(content);
+              } catch {
+                return p.select({
+                  message: pc.yellow(`Corrupt Antigravity config detected. How to proceed?`),
+                  options: [
+                    { value: 'backup', label: 'Backup old file and create new', hint: '(.old)' },
+                    { value: 'overwrite', label: 'Overwrite existing file', hint: '(Deletes corrupt file)' },
+                  ],
+                });
+              }
+            }
+          }
+          return Promise.resolve(undefined);
+        },
+      });
+
+      if (p.isCancel(results)) {
+        p.cancel('Installation cancelled.');
+        process.exit(0);
+      }
+
+      selectedIDEs = results.ides;
+
+      if (results.antigravityRepair) {
+        const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
+        if (results.antigravityRepair === 'backup') {
+          renameSync(configPath, configPath + '.old');
+          log.success(`Backed up to: ${basename(configPath)}.old`);
+        } else {
+          unlinkSync(configPath);
+          log.success('Removed corrupt file.');
+        }
+      }
     }
   } else {
-    // Non-interactive: default to claude-code
     selectedIDEs = ['claude-code'];
   }
 

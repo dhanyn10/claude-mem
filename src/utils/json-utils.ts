@@ -20,7 +20,11 @@ import { logger } from './logger.js';
 export function readJsonSafe<T>(filePath: string, defaultValue: T): T {
   if (!existsSync(filePath)) return defaultValue;
   try {
-    return JSON.parse(readFileSync(filePath, 'utf-8'));
+    const content = readFileSync(filePath, 'utf-8');
+    if (!content.trim()) {
+      throw new Error('Empty file');
+    }
+    return JSON.parse(content);
   } catch (error) {
     throw new Error(`Corrupt JSON file, refusing to overwrite: ${filePath}`);
   }
