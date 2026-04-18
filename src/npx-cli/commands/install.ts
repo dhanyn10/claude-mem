@@ -326,7 +326,7 @@ function runNpmInstallInMarketplace(): void {
   execSync('npm install --production', {
     cwd: marketplaceDir,
     stdio: 'pipe',
-    ...(IS_WINDOWS ? { shell: true as const } : {}),
+    shell: IS_WINDOWS ? 'cmd.exe' : '/bin/sh',
   });
 }
 
@@ -345,7 +345,7 @@ function runSmartInstall(): boolean {
   try {
     execSync(`node "${smartInstallPath}"`, {
       stdio: 'inherit',
-      ...(IS_WINDOWS ? { shell: true as const } : {}),
+      shell: IS_WINDOWS ? 'cmd.exe' : '/bin/sh',
     });
     return true;
   } catch {
