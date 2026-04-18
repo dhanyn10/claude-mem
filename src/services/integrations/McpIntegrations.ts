@@ -72,7 +72,6 @@ function writeMcpJsonConfig(
   writeFileSync(configFilePath, JSON.stringify(existingConfig, null, 2) + '\n');
 }
 
-
 // ============================================================================
 // MCP Installer Factory (Phase 1D)
 // ============================================================================

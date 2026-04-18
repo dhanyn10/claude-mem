@@ -10,7 +10,7 @@
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import { execSync } from 'child_process';
-import { cpSync, existsSync, readFileSync, rmSync, renameSync, unlinkSync } from 'fs';
+import { cpSync, existsSync, readFileSync, rmSync, renameSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
 
@@ -36,10 +36,10 @@ async function runTasks(tasks: TaskDescriptor[]): Promise<void> {
 
 /** Log helpers that fall back to console.log in non-TTY */
 const log = {
-  info: (msg: string) => isInteractive ? p.log.info(msg) : console.log(`  ${msg}`),
-  success: (msg: string) => isInteractive ? p.log.success(msg) : console.log(`  ${msg}`),
-  warn: (msg: string) => isInteractive ? p.log.warn(msg) : console.warn(`  ${msg}`),
-  error: (msg: string) => isInteractive ? p.log.error(msg) : console.error(`  ${msg}`),
+  info: (msg: string) => (isInteractive ? p.log.info(msg) : console.log(`  ${msg}`)),
+  success: (msg: string) => (isInteractive ? p.log.success(msg) : console.log(`  ${msg}`)),
+  warn: (msg: string) => (isInteractive ? p.log.warn(msg) : console.log(`  ${msg}`)),
+  error: (msg: string) => (isInteractive ? p.log.error(msg) : console.error(`  ${msg}`)),
 };
 import {
   claudeSettingsPath,
@@ -117,6 +117,7 @@ function enablePluginInClaudeSettings(): void {
 /** Returns a list of IDE IDs that failed setup. */
 async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
   const failedIDEs: string[] = [];
+  const detectedIDEs = detectInstalledIDEs();
 
   for (const ideId of selectedIDEs) {
     switch (ideId) {
@@ -137,14 +138,18 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
       }
 
       case 'cursor': {
-        const { installCursorHooks, configureCursorMcp } = await import('../../services/integrations/CursorHooksInstaller.js');
+        const { installCursorHooks, configureCursorMcp } = await import(
+          '../../services/integrations/CursorHooksInstaller.js'
+        );
         const cursorResult = await installCursorHooks('user');
         if (cursorResult === 0) {
           const mcpResult = configureCursorMcp('user');
           if (mcpResult === 0) {
             log.success('Cursor: hooks + MCP installed.');
           } else {
-            log.success('Cursor: hooks installed (MCP setup failed — run `npx claude-mem cursor mcp` to retry).');
+            log.success(
+              'Cursor: hooks installed (MCP setup failed — run `npx claude-mem cursor mcp` to retry).',
+            );
           }
         } else {
           log.error('Cursor: hook installation failed.');
@@ -154,7 +159,9 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
       }
 
       case 'gemini-cli': {
-        const { installGeminiCliHooks } = await import('../../services/integrations/GeminiCliHooksInstaller.js');
+        const { installGeminiCliHooks } = await import(
+          '../../services/integrations/GeminiCliHooksInstaller.js'
+        );
         const geminiResult = await installGeminiCliHooks();
         if (geminiResult === 0) {
           log.success('Gemini CLI: hooks installed.');
@@ -166,7 +173,9 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
       }
 
       case 'opencode': {
-        const { installOpenCodeIntegration } = await import('../../services/integrations/OpenCodeInstaller.js');
+        const { installOpenCodeIntegration } = await import(
+          '../../services/integrations/OpenCodeInstaller.js'
+        );
         const openCodeResult = await installOpenCodeIntegration();
         if (openCodeResult === 0) {
           log.success('OpenCode: plugin installed.');
@@ -178,7 +187,9 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
       }
 
       case 'windsurf': {
-        const { installWindsurfHooks } = await import('../../services/integrations/WindsurfHooksInstaller.js');
+        const { installWindsurfHooks } = await import(
+          '../../services/integrations/WindsurfHooksInstaller.js'
+        );
         const windsurfResult = await installWindsurfHooks();
         if (windsurfResult === 0) {
           log.success('Windsurf: hooks installed.');
@@ -190,7 +201,9 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
       }
 
       case 'openclaw': {
-        const { installOpenClawIntegration } = await import('../../services/integrations/OpenClawInstaller.js');
+        const { installOpenClawIntegration } = await import(
+          '../../services/integrations/OpenClawInstaller.js'
+        );
         const openClawResult = await installOpenClawIntegration();
         if (openClawResult === 0) {
           log.success('OpenClaw: plugin installed.');
@@ -223,8 +236,7 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
         const mcpInstaller = MCP_IDE_INSTALLERS[ideId];
         if (mcpInstaller) {
           const mcpResult = await mcpInstaller();
-          const allIDEs = detectInstalledIDEs();
-          const ideInfo = allIDEs.find((i) => i.id === ideId);
+          const ideInfo = detectedIDEs.find((i) => i.id === ideId);
           const ideLabel = ideInfo?.label ?? ideId;
           if (mcpResult === 0) {
             log.success(`${ideLabel}: MCP integration installed.`);
@@ -237,8 +249,7 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
       }
 
       default: {
-        const allIDEs = detectInstalledIDEs();
-        const ide = allIDEs.find((i) => i.id === ideId);
+        const ide = detectedIDEs.find((i) => i.id === ideId);
         if (ide && !ide.supported) {
           log.warn(`Support for ${ide.label} coming soon.`);
         }
@@ -248,42 +259,6 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
   }
 
   return failedIDEs;
-}
-
-// ---------------------------------------------------------------------------
-// Interactive IDE selection
-// ---------------------------------------------------------------------------
-
-async function promptForIDESelection(): Promise<string[]> {
-  const detectedIDEs = detectInstalledIDEs();
-  const detected = detectedIDEs.filter((ide) => ide.detected);
-
-  if (detected.length === 0) {
-    log.warn('No supported IDEs detected. Installing for Claude Code by default.');
-    return ['claude-code'];
-  }
-
-  const options = detected.map((ide) => ({
-    value: ide.id,
-    label: ide.label,
-    hint: ide.supported ? ide.hint : 'coming soon',
-  }));
-
-  const result = await p.multiselect({
-    message: 'Which IDEs do you use?',
-    options,
-    initialValues: detected
-      .filter((ide) => ide.supported)
-      .map((ide) => ide.id),
-    required: true,
-  });
-
-  if (p.isCancel(result)) {
-    p.cancel('Installation cancelled.');
-    process.exit(0);
-  }
-
-  return result as string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +376,9 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
 
   // Check for existing installation
   const marketplaceDir = marketplaceDirectory();
-  const alreadyInstalled = existsSync(join(marketplaceDir, 'plugin', '.claude-plugin', 'plugin.json'));
+  const alreadyInstalled = existsSync(
+    join(marketplaceDir, 'plugin', '.claude-plugin', 'plugin.json'),
+  );
 
   if (alreadyInstalled) {
     // Read existing version
@@ -427,71 +404,39 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
     }
   }
 
-  // IDE selection & optional Antigravity repair
+  // Unified Interactive IDE selection
   let selectedIDEs: string[] = [];
+  const detectedIDEs = detectInstalledIDEs();
+  const detected = detectedIDEs.filter((ide) => ide.detected);
 
   if (options.ide) {
     selectedIDEs = [options.ide];
-    const allIDEs = detectInstalledIDEs();
-    const match = allIDEs.find((i) => i.id === options.ide);
+    const match = detectedIDEs.find((i) => i.id === options.ide);
     if (match && !match.supported) {
       log.error(`Support for ${match.label} coming soon.`);
       process.exit(1);
     }
     if (!match) {
       log.error(`Unknown IDE: ${options.ide}`);
-      log.info(`Available IDEs: ${allIDEs.map((i) => i.id).join(', ')}`);
+      log.info(`Available IDEs: ${detectedIDEs.map((i) => i.id).join(', ')}`);
       process.exit(1);
     }
-
-    // Check for corruption in --ide mode if interactive
-    if (options.ide === 'antigravity' && isInteractive) {
-      const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
-      if (existsSync(configPath)) {
-        let corrupt = false;
-        try {
-          const content = readFileSync(configPath, 'utf-8');
-          if (!content.trim()) corrupt = true;
-          else JSON.parse(content);
-        } catch { corrupt = true; }
-
-        if (corrupt) {
-          const choice = await p.select({
-            message: pc.yellow(`Corrupt Antigravity config detected. How would you like to proceed?`),
-            options: [
-              { value: 'backup', label: 'Backup old file and create new', hint: '(.old)' },
-              { value: 'overwrite', label: 'Overwrite existing file', hint: '(Deletes corrupt file)' },
-            ],
-          });
-          if (p.isCancel(choice)) { p.cancel('Installation cancelled.'); process.exit(0); }
-          if (choice === 'backup') {
-            renameSync(configPath, configPath + '.old');
-            log.success(`Backed up to: ${basename(configPath)}.old`);
-          } else {
-            unlinkSync(configPath);
-            log.success('Removed corrupt file.');
-          }
-        }
-      }
-    }
   } else if (isInteractive) {
-    const detectedIDEs = detectInstalledIDEs();
-    const detected = detectedIDEs.filter((ide) => ide.detected);
-
     if (detected.length === 0) {
       log.warn('No supported IDEs detected. Installing for Claude Code by default.');
       selectedIDEs = ['claude-code'];
     } else {
-      const options = detected.map((ide) => ({
+      const ideOptions = detected.map((ide) => ({
         value: ide.id,
         label: ide.label,
         hint: ide.supported ? ide.hint : 'coming soon',
       }));
 
+      // THE FIX: Use p.group to chain prompts
       const results = await p.group({
         ides: () => p.multiselect({
           message: 'Which IDEs do you use?',
-          options,
+          options: ideOptions,
           initialValues: detected.filter((ide) => ide.supported).map((ide) => ide.id),
           required: true,
         }),
@@ -499,44 +444,90 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
           if (results.ides?.includes('antigravity')) {
             const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
             if (existsSync(configPath)) {
+              let isCorrupt = false;
               try {
-                const content = readFileSync(configPath, 'utf-8');
-                if (content.trim()) JSON.parse(content);
+                const content = readFileSync(configPath, 'utf-8').trim();
+                if (!content) isCorrupt = true;
+                else JSON.parse(content);
               } catch {
+                isCorrupt = true;
+              }
+
+              if (isCorrupt) {
                 return p.select({
-                  message: pc.yellow(`Corrupt Antigravity config detected. How to proceed?`),
+                  message: pc.yellow(`Antigravity config is corrupt. How would you like to fix it?`),
                   options: [
-                    { value: 'backup', label: 'Backup old file and create new', hint: '(.old)' },
-                    { value: 'overwrite', label: 'Overwrite existing file', hint: '(Deletes corrupt file)' },
+                    { value: 'backup', label: 'Backup old file and start fresh', hint: '(.old)' },
+                    { value: 'overwrite', label: 'Delete corrupt file and start fresh', hint: '(overwrite)' },
                   ],
                 });
               }
             }
           }
           return Promise.resolve(undefined);
-        },
+        }
+      }, {
+        onCancel: () => {
+          p.cancel('Installation cancelled.');
+          process.exit(0);
+        }
       });
-
-      if (p.isCancel(results)) {
-        p.cancel('Installation cancelled.');
-        process.exit(0);
-      }
 
       selectedIDEs = results.ides;
 
+      // Perform repair actions if requested in the group
       if (results.antigravityRepair) {
         const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
         if (results.antigravityRepair === 'backup') {
           renameSync(configPath, configPath + '.old');
-          log.success(`Backed up to: ${basename(configPath)}.old`);
+          log.success(`Backed up corrupt file to ${basename(configPath)}.old`);
         } else {
-          unlinkSync(configPath);
-          log.success('Removed corrupt file.');
+          rmSync(configPath, { force: true });
+          log.success('Removed corrupt Antigravity config file.');
         }
       }
     }
   } else {
+    // Non-interactive: default to claude-code
     selectedIDEs = ['claude-code'];
+  }
+
+  // Handle single IDE corruption check (for --ide antigravity)
+  if (options.ide === 'antigravity' && isInteractive) {
+    const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
+    if (existsSync(configPath)) {
+      let isCorrupt = false;
+      try {
+        const content = readFileSync(configPath, 'utf-8').trim();
+        if (!content) isCorrupt = true;
+        else JSON.parse(content);
+      } catch {
+        isCorrupt = true;
+      }
+
+      if (isCorrupt) {
+        const action = await p.select({
+          message: pc.yellow(`Antigravity config is corrupt. How would you like to fix it?`),
+          options: [
+            { value: 'backup', label: 'Backup old file and start fresh', hint: '(.old)' },
+            { value: 'overwrite', label: 'Delete corrupt file and start fresh', hint: '(overwrite)' },
+          ],
+        });
+
+        if (p.isCancel(action)) {
+          p.cancel('Installation cancelled.');
+          process.exit(0);
+        }
+
+        if (action === 'backup') {
+          renameSync(configPath, configPath + '.old');
+          log.success(`Backed up corrupt file to ${basename(configPath)}.old`);
+        } else {
+          rmSync(configPath, { force: true });
+          log.success('Removed corrupt Antigravity config file.');
+        }
+      }
+    }
   }
 
   // Non-Claude-Code IDEs need the manual file copy / registration flow.
@@ -624,7 +615,7 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
     p.note(summaryLines.join('\n'), installStatus);
   } else {
     console.log(`\n  ${installStatus}`);
-    summaryLines.forEach(l => console.log(`  ${l}`));
+    summaryLines.forEach((l) => console.log(`  ${l}`));
   }
 
   const workerPort = process.env.CLAUDE_MEM_WORKER_PORT || '37777';
@@ -644,7 +635,7 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
     }
   } else {
     console.log('\n  Next Steps');
-    nextSteps.forEach(l => console.log(`  ${l}`));
+    nextSteps.forEach((l) => console.log(`  ${l}`));
     if (failedIDEs.length > 0) {
       console.log('\nclaude-mem installed with some IDE setup failures.');
       process.exitCode = 1;
