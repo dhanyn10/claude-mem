@@ -38,20 +38,26 @@ function bunCandidatePaths(): string[] {
  * 1. Check PATH via `which` / `where`.
  * 2. Probe well-known installation directories.
  *
- * Returns the absolute path to the binary, `'bun'` if it is in PATH,
- * or `null` if Bun cannot be found.
+ * Returns the absolute path to the binary, or `null` if Bun cannot be found.
  */
 export function resolveBunBinaryPath(): string | null {
   // Try PATH first
-  const whichCommand = IS_WINDOWS ? 'where' : 'which';
-  const pathCheck = spawnSync(whichCommand, ['bun'], {
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-    shell: IS_WINDOWS,
-  });
+  try {
+    const whichCommand = IS_WINDOWS ? 'where.exe' : 'which';
+    const pathCheck = spawnSync(whichCommand, ['bun'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false, // SECURITY: Fixed DEP0190 by disabling shell with argument array
+    });
 
-  if (pathCheck.status === 0 && pathCheck.stdout.trim()) {
-    return 'bun'; // Available in PATH — use short name
+    if (pathCheck.status === 0 && pathCheck.stdout.trim()) {
+      const paths = pathCheck.stdout.split(/\r?\n/).map(p => p.trim()).filter(Boolean);
+      if (paths.length > 0) {
+        return paths[0]; // Return absolute path from PATH
+      }
+    }
+  } catch {
+    // Fall through to probe
   }
 
   // Probe known install locations
@@ -76,7 +82,7 @@ export function getBunVersionString(): string | null {
     const result = spawnSync(bunPath, ['--version'], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: IS_WINDOWS,
+      shell: false, // SECURITY: Fixed DEP0190
     });
     return result.status === 0 ? result.stdout.trim() : null;
   } catch {

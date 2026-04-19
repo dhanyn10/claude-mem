@@ -10,8 +10,9 @@
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import { execSync } from 'child_process';
-import { cpSync, existsSync, readFileSync, rmSync } from 'fs';
-import { join } from 'path';
+import { cpSync, existsSync, readFileSync, rmSync, renameSync } from 'fs';
+import { join, basename } from 'path';
+import { homedir } from 'os';
 
 // Non-TTY detection: @clack/prompts crashes with ENOENT in non-TTY environments
 const isInteractive = process.stdin.isTTY === true;
@@ -116,6 +117,7 @@ function enablePluginInClaudeSettings(): void {
 /** Returns a list of IDE IDs that failed setup. */
 async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
   const failedIDEs: string[] = [];
+  const detectedIDEs = detectInstalledIDEs();
 
   for (const ideId of selectedIDEs) {
     switch (ideId) {
@@ -125,7 +127,10 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
         try {
           execSync(
             'claude plugin marketplace add thedotmack/claude-mem && claude plugin install claude-mem',
-            { stdio: 'inherit' },
+            {
+              stdio: 'inherit',
+              shell: IS_WINDOWS ? 'cmd.exe' : '/bin/sh',
+            },
           );
           log.success('Claude Code: plugin installed via CLI.');
         } catch {
@@ -222,8 +227,7 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
         const mcpInstaller = MCP_IDE_INSTALLERS[ideId];
         if (mcpInstaller) {
           const mcpResult = await mcpInstaller();
-          const allIDEs = detectInstalledIDEs();
-          const ideInfo = allIDEs.find((i) => i.id === ideId);
+          const ideInfo = detectedIDEs.find((i) => i.id === ideId);
           const ideLabel = ideInfo?.label ?? ideId;
           if (mcpResult === 0) {
             log.success(`${ideLabel}: MCP integration installed.`);
@@ -236,8 +240,7 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
       }
 
       default: {
-        const allIDEs = detectInstalledIDEs();
-        const ide = allIDEs.find((i) => i.id === ideId);
+        const ide = detectedIDEs.find((i) => i.id === ideId);
         if (ide && !ide.supported) {
           log.warn(`Support for ${ide.label} coming soon.`);
         }
@@ -247,42 +250,6 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
   }
 
   return failedIDEs;
-}
-
-// ---------------------------------------------------------------------------
-// Interactive IDE selection
-// ---------------------------------------------------------------------------
-
-async function promptForIDESelection(): Promise<string[]> {
-  const detectedIDEs = detectInstalledIDEs();
-  const detected = detectedIDEs.filter((ide) => ide.detected);
-
-  if (detected.length === 0) {
-    log.warn('No supported IDEs detected. Installing for Claude Code by default.');
-    return ['claude-code'];
-  }
-
-  const options = detected.map((ide) => ({
-    value: ide.id,
-    label: ide.label,
-    hint: ide.supported ? ide.hint : 'coming soon',
-  }));
-
-  const result = await p.multiselect({
-    message: 'Which IDEs do you use?',
-    options,
-    initialValues: detected
-      .filter((ide) => ide.supported)
-      .map((ide) => ide.id),
-    required: true,
-  });
-
-  if (p.isCancel(result)) {
-    p.cancel('Installation cancelled.');
-    process.exit(0);
-  }
-
-  return result as string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +317,7 @@ function runNpmInstallInMarketplace(): void {
   execSync('npm install --production', {
     cwd: marketplaceDir,
     stdio: 'pipe',
-    ...(IS_WINDOWS ? { shell: true as const } : {}),
+    shell: IS_WINDOWS ? 'cmd.exe' : '/bin/sh',
   });
 }
 
@@ -369,7 +336,7 @@ function runSmartInstall(): boolean {
   try {
     execSync(`node "${smartInstallPath}"`, {
       stdio: 'inherit',
-      ...(IS_WINDOWS ? { shell: true as const } : {}),
+      shell: IS_WINDOWS ? 'cmd.exe' : '/bin/sh',
     });
     return true;
   } catch {
@@ -400,7 +367,9 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
 
   // Check for existing installation
   const marketplaceDir = marketplaceDirectory();
-  const alreadyInstalled = existsSync(join(marketplaceDir, 'plugin', '.claude-plugin', 'plugin.json'));
+  const alreadyInstalled = existsSync(
+    join(marketplaceDir, 'plugin', '.claude-plugin', 'plugin.json'),
+  );
 
   if (alreadyInstalled) {
     // Read existing version
@@ -426,26 +395,93 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
     }
   }
 
-  // IDE selection
-  let selectedIDEs: string[];
+  // Unified Interactive IDE selection
+  let selectedIDEs: string[] = [];
+  const detectedIDEs = detectInstalledIDEs();
+  const detected = detectedIDEs.filter((ide) => ide.detected);
+
   if (options.ide) {
     selectedIDEs = [options.ide];
-    const allIDEs = detectInstalledIDEs();
-    const match = allIDEs.find((i) => i.id === options.ide);
+    const match = detectedIDEs.find((i) => i.id === options.ide);
     if (match && !match.supported) {
       log.error(`Support for ${match.label} coming soon.`);
       process.exit(1);
     }
     if (!match) {
       log.error(`Unknown IDE: ${options.ide}`);
-      log.info(`Available IDEs: ${allIDEs.map((i) => i.id).join(', ')}`);
+      log.info(`Available IDEs: ${detectedIDEs.map((i) => i.id).join(', ')}`);
       process.exit(1);
     }
-  } else if (process.stdin.isTTY) {
-    selectedIDEs = await promptForIDESelection();
+  } else if (isInteractive) {
+    if (detected.length === 0) {
+      log.warn('No supported IDEs detected. Installing for Claude Code by default.');
+      selectedIDEs = ['claude-code'];
+    } else {
+      const ideOptions = detected.map((ide) => ({
+        value: ide.id,
+        label: ide.label,
+        hint: ide.supported ? ide.hint : 'coming soon',
+      }));
+
+      const ides = await p.multiselect({
+        message: 'Which IDEs do you use?',
+        options: ideOptions,
+        initialValues: detected.filter((ide) => ide.supported).map((ide) => ide.id),
+        required: true,
+      });
+
+      if (p.isCancel(ides)) {
+        p.cancel('Installation cancelled.');
+        process.exit(0);
+      }
+
+      selectedIDEs = ides as string[];
+    }
   } else {
     // Non-interactive: default to claude-code
     selectedIDEs = ['claude-code'];
+  }
+
+  // MCP Setup prompt for Antigravity (merged for both interactive and flag flows)
+  if (selectedIDEs.includes('antigravity') && isInteractive) {
+    const configPath = join(homedir(), '.gemini', 'antigravity', 'mcp_config.json');
+    if (existsSync(configPath)) {
+      // Proactively check for corruption
+      let isCorrupt = false;
+      try {
+        const content = readFileSync(configPath, 'utf-8').trim();
+        if (!content) isCorrupt = true;
+        else JSON.parse(content);
+      } catch {
+        isCorrupt = true;
+      }
+
+      const promptMessage = isCorrupt
+        ? pc.yellow('Antigravity config is corrupt. How would you like to handle it?')
+        : 'Existing Antigravity config found. How would you like to proceed?';
+
+      const action = await p.select({
+        message: promptMessage,
+        options: [
+          { value: 'backup', label: 'Backup old file and start fresh', hint: '(.old)' },
+          { value: 'overwrite', label: 'Delete existing file and start fresh', hint: '(overwrite)' },
+          { value: 'keep', label: 'Keep existing file (may cause errors if corrupt)', hint: '(merge)' },
+        ],
+      });
+
+      if (p.isCancel(action)) {
+        p.cancel('Installation cancelled.');
+        process.exit(0);
+      }
+
+      if (action === 'backup') {
+        renameSync(configPath, configPath + '.old');
+        log.success(`Backed up existing file to ${basename(configPath)}.old`);
+      } else if (action === 'overwrite') {
+        rmSync(configPath, { force: true });
+        log.success('Removed existing Antigravity config file.');
+      }
+    }
   }
 
   // Non-Claude-Code IDEs need the manual file copy / registration flow.
@@ -533,7 +569,7 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
     p.note(summaryLines.join('\n'), installStatus);
   } else {
     console.log(`\n  ${installStatus}`);
-    summaryLines.forEach(l => console.log(`  ${l}`));
+    summaryLines.forEach((l) => console.log(`  ${l}`));
   }
 
   const workerPort = process.env.CLAUDE_MEM_WORKER_PORT || '37777';
@@ -553,7 +589,7 @@ export async function runInstallCommand(options: InstallOptions = {}): Promise<v
     }
   } else {
     console.log('\n  Next Steps');
-    nextSteps.forEach(l => console.log(`  ${l}`));
+    nextSteps.forEach((l) => console.log(`  ${l}`));
     if (failedIDEs.length > 0) {
       console.log('\nclaude-mem installed with some IDE setup failures.');
       process.exitCode = 1;
