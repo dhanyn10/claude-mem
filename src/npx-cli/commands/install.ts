@@ -127,7 +127,10 @@ async function setupIDEs(selectedIDEs: string[]): Promise<string[]> {
         try {
           execSync(
             'claude plugin marketplace add thedotmack/claude-mem && claude plugin install claude-mem',
-            { stdio: 'inherit' },
+            {
+              stdio: 'inherit',
+              shell: IS_WINDOWS ? 'cmd.exe' : '/bin/sh',
+            },
           );
           log.success('Claude Code: plugin installed via CLI.');
         } catch {
